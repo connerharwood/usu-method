@@ -1,0 +1,6 @@
+Data/*
+!Data/.gitkeep
+.Rproj.user
+.Rhistory
+.Rout
+.DS_Store
