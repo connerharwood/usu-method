@@ -65,9 +65,8 @@ for (year in 2016:2024) {
         year = year, # Create year column
         month = month, # Create month column
         et_in = mean / 25.4, # Convert ET from mm to in
-        et_ft = et_in / 12, # Convert ET from in to ft
       ) |> 
-      select(id, year, month, et_in, et_ft) |> 
+      select(id, year, month, et_in) |> 
       # Set as data table for faster processing
       setDT()
     
@@ -83,7 +82,7 @@ for (year in 2016:2024) {
 all_et = rbindlist(all_et_list) |> 
   # Create water year variable
   mutate(water_year = if_else(month >= 11, year + 1, year)) |> 
-  select(id, water_year, year, month, et_in, et_ft)
+  select(id, water_year, year, month, et_in)
 
 # Calculate winter ET for each field and water year
 et_winter = all_et |> 
@@ -92,26 +91,16 @@ et_winter = all_et |>
   group_by(id, water_year) |> 
   summarize(et_win_in = sum(et_in, na.rm = FALSE), .groups = "drop")
 
-# Calculate growing season ET for each field and water year
-et_grow = all_et |> 
-  # Filter to April through October
-  filter(month %in% c(4, 5, 6, 7, 8, 9, 10)) |> 
-  group_by(id, water_year) |> 
-  summarize(et_grow_in = sum(et_in, na.rm = FALSE), .groups = "drop")
-
 # Rejoin winter and growing season ET with monthly ET panel
 openet_eemetric = all_et |> 
   left_join(et_winter, by = c("id", "water_year")) |> 
-  left_join(et_grow, by = c("id", "water_year")) |> 
   select(
     id, 
     water_year,
     year, 
     month, 
     et_in, 
-    et_ft, 
-    et_win_in, 
-    et_grow_in
+    et_win_in
   ) |> 
   # Set as data table for faster processing
   setDT()

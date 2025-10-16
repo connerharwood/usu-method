@@ -50,7 +50,8 @@ mu_restrictions = co_restrictions |>
 cn_mean = curve_numbers |> 
   group_by(hydro_group) |> 
   summarize(mean_cn = mean(curve_number, na.rm = TRUE), .groups = "drop")
-  
+
+# Calculate mean curve number for multiple hydrologic groups
 cn_mean = cn_mean |> 
   bind_rows(
     tibble(
@@ -63,15 +64,21 @@ cn_mean = cn_mean |>
     )
   )
 
-# Calculate component-weighted hydrologic condition and group
-mu_hydro = comp |>
+# Calculate component percent-weighted mean curve number for each map unit
+mu_cn = comp |>
+  # Join with hydrologic group curve numbers
+  left_join(cn_mean, by = "hydro_group", relationship = "many-to-one") |> 
   group_by(mukey) |> 
   summarize(
-    hydro_condition = if_else(all(is.na(hydro_condition)), NA, paste(unique(na.omit(hydro_condition)), collapse = ", ")),
-    hydro_group = hydro_group[which.max(co_pct)],
+    curve_number = if_else(
+      # If all of a map unit's components are missing CN, assign as NA
+      all(is.na(mean_cn)),
+      NA,
+      # Compute weighted mean CN of non-NA components
+      sum(mean_cn * co_pct, na.rm = TRUE) / sum(co_pct[!is.na(mean_cn)], na.rm = TRUE)
+    ),
     .groups = "drop"
-  ) |> 
-  left_join(cn_mean, by = "hydro_group")
+  )
 
 ssurgo_stats = ssurgo_aoi |> 
   # Join map units with their AWS and depth to water table
@@ -79,7 +86,7 @@ ssurgo_stats = ssurgo_aoi |>
   # Join map units with their depth to restrictive layer
   left_join(mu_restrictions, by = "mukey", relationship = "many-to-one") |> 
   # Join map units with their hydrologic condition and group
-  left_join(mu_hydro, by = "mukey", relationship = "many-to-one") |> 
+  left_join(mu_cn, by = "mukey", relationship = "many-to-one") |> 
   mutate(
     # Compute area in acres of each map unit polygon
     mu_acres = as.numeric(st_area(geom)) / 4046.8564224,
@@ -105,11 +112,8 @@ ssurgo = ssurgo_stats |>
     water_table_in = weighted.mean(water_table_in, w = mu_acres, na.rm = TRUE),
     # Calculate area-weighted mean depth to restrictive layer
     restrictive_layer_in = weighted.mean(restrictive_layer_in, w = mu_acres, na.rm = TRUE),
-    
-    hydro_condition = if_else(all(is.na(hydro_condition)), NA, paste(unique(na.omit(hydro_condition)), collapse = ", ")),
-    hydro_group = hydro_group[which.max(mu_acres)],
-    curve_number = weighted.mean(mean_cn, w = mu_acres, na.rm = TRUE),
-    
+    # Calculate area-weighted curve number
+    curve_number = weighted.mean(curve_number, w = mu_acres, na.rm = TRUE),
     .groups = "drop"
   ) |> 
   mutate(
@@ -121,7 +125,7 @@ ssurgo = ssurgo_stats |>
   # Join each field with its SSURGO data
   right_join(fields, by = "id") |> 
   # Select needed variables
-  select(id, awc_in_in, swsf, max_rz_in, hydro_condition, hydro_group, curve_number) |> 
+  select(id, awc_in_in, swsf, max_rz_in, curve_number) |> 
   # Set as data table for faster processing
   setDT()
 

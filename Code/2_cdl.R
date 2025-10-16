@@ -7,7 +7,7 @@ library(exactextractr)
 
 # ==== PROCESS CDL DATA ========================================================
 
-# Load crop rooting zone depths for CDL crops
+# Load crop rooting zone depths
 rooting_depth = read_excel("Data/Misc/rooting_depth.xlsx")
 
 # Load sample rast to transform fields CRS

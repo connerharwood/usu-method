@@ -1,14 +1,21 @@
 
 library(tidyverse)
 
+# ==== SETUP ===================================================================
+
 # Directory to download and extract PRISM data to
-dir = "Data/USU Method/PRISM Daily"
+dir = "Data/Raw/PRISM Daily"
 
 # Define start and end date to download daily data for
 start_date = as.Date("2016-11-01")
 end_date = as.Date("2024-10-31")
 
 all_dates = seq(start_date, end_date, by = "day")
+
+# Vector store dates of failed downloads
+failed_downloads = character(0)
+
+# ==== DOWNLOAD ================================================================
 
 # Loop through each year and month
 for (i in seq_along(all_dates)) {
@@ -69,12 +76,6 @@ for (i in seq_along(all_dates)) {
     })
   } else {
     cat("Failed to download after 5 attempts:", date_str, "\n")
+    failed_downloads = c(failed_downloads, date_str)
   }
 }
-
-
-library(terra)
-files = list.files("Data/Raw/PRISM Daily/", full.names = TRUE)
-file_dates <- as.Date(sub(".*_(\\d{8})\\.tif$", "\\1", files), format = "%Y%m%d")
-files_to_delete <- files[file_dates < as.Date("2016-11-01")]
-file.remove(files_to_delete)

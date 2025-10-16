@@ -1,11 +1,53 @@
 
 library(tidyverse)
+library(sf)
 library(data.table)
 
 # ==== LOAD ====================================================================
 
-load("Data/Clean/Depletion/Utah/masterdata.rda")
+# Load 2017-2024 Utah fields panel
+fields_panel = st_read("Data/Clean/Fields/fields_panel.gpkg") |> 
+  st_drop_geometry()
 
+load("Data/Clean/Input Data/openet_eemetric.rda")
+load("Data/Clean/Input Data/peff.rda")
+load("Data/Clean/Input Data/smco.rda")
+
+# ==== MERGE ===================================================================
+
+all_combos = expand_grid(
+  id = unique(fields_panel$id),
+  date = seq(as.Date("2016-11-01"), as.Date("2024-10-01"), by = "month")
+) |> 
+  mutate(
+    year = year(date), 
+    month = month(date),
+    water_year = if_else(month >= 11, year + 1, year)
+  ) |> 
+  select(id, water_year, year, month)
+
+masterdata = all_combos |> 
+  left_join(
+    fields_panel,
+    by = c("id", "water_year" = "year"),
+    relationship = "many-to-one"
+  ) |> 
+  left_join(
+    openet_eemetric |> select(id, water_year, year, month, et_in),
+    by = c("id", "water_year", "year", "month"),
+    relationship = "one-to-one"
+  ) |> 
+  left_join(
+    peff |> select(id, water_year, year, month, peff_in),
+    by = c("id", "water_year", "year", "month"),
+    relationship = "one-to-one"
+  ) |> 
+  left_join(
+    smco,
+    by = c("id", "water_year"),
+    relationship = "many-to-one"
+  )
+  
 # ==== CALCULATE DEPLETION =====================================================
 
 # Calculate monthly depletion for each field and growing month
@@ -78,7 +120,6 @@ depletion_annual = depletion_monthly |>
     prcp_win_in = first(prcp_win_in), # Winter precip (inches)
     prcp_grow_in = sum(prcp_in, na.rm = FALSE), # Growing season precip (inches)
     et_win_in = first(et_win_in), # Winter ET (inches)
-    et_grow_in = first(et_grow_in), # Growing season ET (inches)
     sm_co_in = first(sm_co_in), # Winter carryover soil moisture (inches)
     peff_grow_in = first(peff_grow_in), # Growing season effective precip (inches)
     depletion_in = sum(depletion_in, na.rm = FALSE), # Growing season depletion (inches)
@@ -88,8 +129,3 @@ depletion_annual = depletion_monthly |>
   ) |> 
   # Convert to data table
   setDT()
-
-# ==== SAVE ====================================================================
-
-save(depletion_monthly, file = "Data/Clean/Depletion/Utah/depletion_monthly.rda")
-save(depletion_annual, file = "Data/Clean/Depletion/Utah/depletion_annual.rda")

@@ -82,23 +82,10 @@ for (year in 2016:2024) {
 }
 
 # Append list of each year's precip data into one dataframe
-all_prcp = rbindlist(all_prcp_list) |> 
+prism_monthly = rbindlist(all_prcp_list) |> 
   # Create water year variable
   mutate(water_year = if_else(month >= 11, year + 1, year)) |> 
   select(id, water_year, year, month, prcp_in)
-
-# Calculate winter precip for each field and water year
-prcp_winter = all_prcp |> 
-  # Filter to November through March
-  filter(month %in% c(11, 12, 1, 2, 3)) |> 
-  group_by(id, water_year) |> 
-  summarize(prcp_win_in = sum(prcp_in, na.rm = FALSE), .groups = "drop")
-
-# Rejoin winter precip with monthly precip panel
-prism_monthly = all_prcp |> 
-  left_join(prcp_winter, by = c("id", "water_year")) |> 
-  select(id, water_year, year, month, prcp_in, prcp_win_in) |> 
-  setDT()
 
 # ==== SAVE ====================================================================
 

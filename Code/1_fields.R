@@ -89,7 +89,7 @@ for (yr in 2017:2024) {
   }
 }
 
-# Load crop rooting zone depths for WRLU crops
+# Load crop rooting zone depths
 rooting_depth = read_excel("Data/Misc/rooting_depth.xlsx")
 
 # ==== BUILD PANEL =============================================================
