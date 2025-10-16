@@ -1,0 +1,220 @@
+
+library(tidyverse)
+library(sf)
+library(readxl)
+library(glue)
+
+# ==== REPAIR WRLU GEOMETRY ====================================================
+
+for (year in 2017:2024) {
+  # Full path of raw shapefile to fix
+  shapefile_raw = list.files(
+    path = file.path("Data/Raw/WRLU/Raw", year),
+    pattern = paste0(".*", year, ".*\\.shp$"),
+    full.names = TRUE,
+    recursive = FALSE
+  )
+  
+  # Full path to write fixed shapefile to
+  shapefile_fixed = file.path("Data/Raw/WRLU/Repaired", year, paste0("wrlu_", year, ".shp"))
+  
+  # Use ogr2ogr to validate geometry of raw shapefile, saving as new shapefile
+  system(paste(
+    "ogr2ogr -f 'ESRI Shapefile'",
+    shQuote(shapefile_fixed),
+    shQuote(shapefile_raw),
+    "-makevalid"
+  ))
+}
+
+# ==== LOAD ====================================================================
+
+# Initialize list to store each WRLU year
+wrlu_list = list()
+
+# Load and process each WRLU year
+for (yr in 2017:2024) {
+  # Shapefile path
+  file_path = glue("Data/Raw/WRLU/Repaired/{yr}/wrlu_{yr}.shp")
+  
+  # Load and process 2024 separately
+  if (yr == 2024) {
+    # Load shapefile
+    wrlu_2024 = st_read(file_path) |> 
+      # Only include agriculture fields in Utah
+      filter(Landuse == "Agricultural", State == "Utah") |> 
+      # Select and rename needed variables
+      select(
+        id = OBJECTID,
+        county = County,
+        basin = Basin,
+        sub_area = SubArea,
+        land_use = Landuse,
+        acres_2024 = Acres,
+        crop_2024 = Descriptio,
+        cdl_2024 = Class_Name,
+        crop_group_2024 = CropGroup,
+        land_use_group_2024 = LU_Group,
+        irr_method_2024 = IRR_Method,
+        geometry
+      ) |> 
+      # Make geometry valid
+      st_make_valid() |> 
+      # Transform to NAD 83 for spatial operations
+      st_transform(crs = 26912) |> 
+      # Create field centroid for joining with previous years
+      mutate(centroid = st_centroid(geometry))
+  } else {
+    # Load shapefile
+    wrlu = st_read(file_path) |> 
+      # Only include agriculture fields in Utah
+      filter(Landuse == "Agricultural", State == "Utah") |> 
+      # Select and rename needed variables
+      select(
+        !!glue("acres_{yr}") := Acres,
+        !!glue("crop_{yr}") := Descriptio,
+        !!glue("cdl_{yr}") := Class_Name,
+        !!glue("crop_group_{yr}") := CropGroup,
+        !!glue("land_use_group_{yr}") := LU_Group,
+        !!glue("irr_method_{yr}") := IRR_Method,
+        geometry
+      ) |> 
+      # Make geometry valid
+      st_make_valid() |> 
+      # Transform to NAD 83 for spatial operations
+      st_transform(crs = 26912)
+    
+    # Store in list with name by year
+    wrlu_list[[as.character(yr)]] = wrlu
+  }
+}
+
+# Load crop rooting zone depths for WRLU crops
+rooting_depth = read_excel("Data/Misc/rooting_depth.xlsx")
+
+# ==== BUILD PANEL =============================================================
+
+# Define 2024 fields as base polygons
+wrlu_base = wrlu_2024
+
+# Loop through each year, spatially joining with 2024 fields
+for (yr in names(wrlu_list)) {
+  # Get current year's WRLU sf object
+  wrlu_current = wrlu_list[[yr]]
+  
+  # Join current year's fields with 2024's field centroids
+  wrlu_base = st_join(
+    wrlu_base,
+    wrlu_current,
+    join = st_intersects # Find fields that intersect with 2024 centroids
+  )
+  
+  # Create dynamic columns for current year
+  acres_col = paste0("acres_", yr)
+  crop_col = paste0("crop_", yr)
+  cdl_col = paste0("cdl_", yr)
+  crop_group_col = paste0("crop_group_", yr)
+  land_use_group_col = paste0("land_use_group_", yr)
+  irr_method_col = paste0("irr_method_", yr)
+  
+  wrlu_base = wrlu_base |>
+    # Calculate difference in acres between current year and 2024 field
+    mutate(acres_diff = abs(acres_2024 - .data[[acres_col]])) |> 
+    group_by(id) |> 
+    # For each field, keep the intersecting field with smallest difference in acreage
+    slice_min(order_by = acres_diff, n = 1, with_ties = FALSE) |> 
+    ungroup() |> 
+    mutate(
+      # Replace current year's entry with NA if acreage difference is too big
+      !!crop_col := if_else(acres_diff > 0.01, NA, .data[[crop_col]]),
+      !!cdl_col := if_else(acres_diff > 0.01, NA, .data[[cdl_col]]),
+      !!crop_group_col := if_else(acres_diff > 0.01, NA, .data[[crop_group_col]]),
+      !!land_use_group_col := if_else(acres_diff > 0.01, NA, .data[[land_use_group_col]]),
+      !!irr_method_col := if_else(acres_diff > 0.01, NA, .data[[irr_method_col]])
+    )
+  
+  # Pivot to long format
+  wrlu_panel = wrlu_base |> 
+    pivot_longer(
+      cols = matches("^(crop(_group)?|cdl|land_use_group|irr_method)_"),
+      names_to = c(".value", "year"),
+      names_pattern = "(.*)_(\\d{4})"
+    ) |> 
+    # Convert year to integer and crop to title case
+    mutate(year = as.integer(year), crop = str_to_title(crop))
+}
+
+# ==== ANALYZE CROP LABELING CHANGES ===========================================
+
+# Count number of crops per year to analyze changes in labels across years
+crop_count = wrlu_panel |> 
+  st_drop_geometry() |> 
+  group_by(crop, year) |> 
+  count() |> 
+  pivot_wider(names_from = year, values_from = n)
+
+# For each WRLU crop that doens't match a CDL crop, look at most common CDL crop
+beans = wrlu_panel |> filter(crop == "Beans") |> group_by(cdl) |> count()
+berries = wrlu_panel |> filter(crop == "Berries") |> group_by(cdl) |> count()
+dry = wrlu_panel |> filter(crop == "Dry Land/Other") |> group_by(cdl) |> count()
+fallow = wrlu_panel |> filter(crop == "Fallow") |> group_by(cdl) |> count()
+fallow_idle = wrlu_panel |> filter(crop == "Fallow/Idle") |> group_by(cdl) |> count()
+field_un = wrlu_panel |> filter(crop == "Field Crop Unspecified") |> group_by(cdl) |> count()
+grain_un = wrlu_panel |> filter(crop == "Grain/Seeds Unspecified") |> group_by(cdl) |> count()
+grass_hay = wrlu_panel |> filter(crop == "Grass Hay") |> group_by(cdl) |> count()
+horti = wrlu_panel |> filter(crop == "Horticulture") |> group_by(cdl) |> count()
+idle = wrlu_panel |> filter(crop == "Idle") |> group_by(cdl) |> count()
+idle_pasture = wrlu_panel |> filter(crop == "Idle Pasture") |> group_by(cdl) |> count()
+melon = wrlu_panel |> filter(crop == "Melon") |> group_by(cdl) |> count()
+onion = wrlu_panel |> filter(crop == "Onion") |> group_by(cdl) |> count()
+orchard_un = wrlu_panel |> filter(crop == "Orchard Unspecified") |> group_by(cdl) |> count()
+pasture = wrlu_panel |> filter(crop == "Pasture") |> group_by(cdl) |> count()
+potato = wrlu_panel |> filter(crop == "Potato") |> group_by(cdl) |> count()
+turf = wrlu_panel |> filter(crop == "Turfgrass") |> group_by(cdl) |> count()
+turf_ag = wrlu_panel |> filter(crop == "Turfgrass Ag") |> group_by(cdl) |> count()
+veg = wrlu_panel |> filter(crop == "Vegetables") |> group_by(cdl) |> count()
+
+# ==== FINALIZE PANEL ==========================================================
+
+# Finalize 2017-2024 fields panel
+fields_panel_temp = wrlu_panel |> 
+  # Align crop names across years and with CDL labels
+  mutate(crop = case_when(
+    crop %in% c("Dry Land/Other", "Fallow", "Idle", "Fallow/Idle") ~ "Fallow/Idle Cropland",
+    crop %in% c("Idle Pasture", "Pasture") ~ "Grass/Pasture",
+    crop %in% c("Turfgrass", "Turfgrass Ag") ~ "Sod/Grass Seed",
+    crop == "Beans" ~ "Dry Beans",
+    crop == "Field Crop Unspecified" ~ "Other Crops",
+    crop == "Grass Hay" ~ "Other Hay/Non Alfalfa",
+    crop == "Onion" ~ "Onions",
+    crop == "Orchard Unspecified" ~ "Other Tree Crops",
+    crop == "Potato" ~ "Potatoes",
+    TRUE ~ crop
+  )) |> 
+  # Merge with rooting depth data
+  left_join(rooting_depth, by = "crop") |> 
+  # Select needed variables
+  select(
+    id,
+    year,
+    county,
+    basin,
+    sub_area,
+    land_use,
+    acres = acres_2024,
+    crop,
+    crop_group,
+    land_use_group,
+    rz_in,
+    irr_method,
+    geometry
+  ) |> 
+  # Order each field by descending year
+  arrange(id, desc(year)) |> 
+  # Transform to WGS 84
+  st_transform(crs = 4326)
+
+# ==== SAVE ====================================================================
+
+# Save as temporary fields panel (final panel will have CDL data for missing crops)
+st_write(fields_panel_temp, "Data/Clean/Fields/Temp/fields_panel_temp.gpkg", delete_layer = TRUE)
