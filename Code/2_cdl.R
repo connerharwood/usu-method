@@ -1,9 +1,9 @@
 
 library(tidyverse)
 library(sf)
-library(readxl)
 library(terra)
 library(exactextractr)
+library(readxl)
 
 # ==== PROCESS CDL DATA ========================================================
 

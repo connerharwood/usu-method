@@ -1,10 +1,10 @@
 
 library(tidyverse)
 library(sf)
-library(data.table)
-library(glue)
 library(terra)
 library(exactextractr)
+library(data.table)
+library(glue)
 
 # ==== LOAD ====================================================================
 
@@ -60,9 +60,7 @@ for (i in seq_along(all_dates)) {
       day = day(date), # Create day column
       prcp_in = mean / 25.4 # Convert precip from mm to in
     ) |>
-    select(id, year, month, day, prcp_in) |> 
-    # Set as data table for faster processing
-    setDT()
+    select(id, year, month, day, prcp_in)
   
   # Append current day into list of all days
   all_prcp_list[[i]] = prcp_extract

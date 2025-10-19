@@ -1,6 +1,5 @@
 
 library(tidyverse)
-library(data.table)
 
 # ==== LOAD ====================================================================
 
@@ -48,8 +47,7 @@ peff_winter = peff_monthly |>
 
 peff = peff_monthly |> 
   left_join(peff_winter, by = c("id", "water_year")) |> 
-  select(id, water_year, year, month, peff_in, peff_win_in) |> 
-  setDT()
+  select(id, water_year, year, month, peff_in, peff_win_in)
   
 # ==== SAVE ====================================================================
 

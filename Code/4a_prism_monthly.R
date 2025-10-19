@@ -1,10 +1,10 @@
 
 library(tidyverse)
 library(sf)
-library(data.table)
-library(glue)
 library(terra)
 library(exactextractr)
+library(data.table)
+library(glue)
 
 # ==== LOAD ====================================================================
 
@@ -49,7 +49,7 @@ for (year in 2016:2024) {
     
     # Extract each field's monthly precip
     prcp_extract = exact_extract(
-      # Extract raster values for current month's field poylgons
+      # Extract raster values for current month's field polygons
       prism_rast, 
       fields_sf, 
       
@@ -69,9 +69,7 @@ for (year in 2016:2024) {
         month = month, # Create month column
         prcp_in = mean / 25.4 # Convert precip from mm to in
       ) |> 
-      select(id, year, month, prcp_in) |> 
-      # Set as data table for faster processing
-      setDT()
+      select(id, year, month, prcp_in)
     
     # Store current month in list
     year_list[[as.character(month)]] = prcp_extract

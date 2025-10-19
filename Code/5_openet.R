@@ -1,10 +1,10 @@
 
 library(tidyverse)
 library(sf)
-library(data.table)
-library(glue)
 library(terra)
 library(exactextractr)
+library(data.table)
+library(glue)
 
 # ==== LOAD ====================================================================
 
@@ -66,9 +66,7 @@ for (year in 2016:2024) {
         month = month, # Create month column
         et_in = mean / 25.4, # Convert ET from mm to in
       ) |> 
-      select(id, year, month, et_in) |> 
-      # Set as data table for faster processing
-      setDT()
+      select(id, year, month, et_in)
     
     # Store current month in list
     year_list[[as.character(month)]] = et_extract
@@ -91,7 +89,7 @@ et_winter = all_et |>
   group_by(id, water_year) |> 
   summarize(et_win_in = sum(et_in, na.rm = FALSE), .groups = "drop")
 
-# Rejoin winter and growing season ET with monthly ET panel
+# Rejoin winter season ET with monthly ET panel
 openet_eemetric = all_et |> 
   left_join(et_winter, by = c("id", "water_year")) |> 
   select(
@@ -101,9 +99,7 @@ openet_eemetric = all_et |>
     month, 
     et_in, 
     et_win_in
-  ) |> 
-  # Set as data table for faster processing
-  setDT()
+  )
 
 # ==== SAVE ====================================================================
 

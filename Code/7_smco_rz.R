@@ -1,7 +1,6 @@
 
 library(tidyverse)
 library(sf)
-library(data.table)
 library(readxl)
 
 # ==== LOAD ====================================================================
@@ -58,13 +57,13 @@ merge = all_combos |>
     TRUE ~ rz_in # Keep all other cases as is
   ))
 
-smco = merge |> 
+smco_rz = merge |> 
   group_by(id, water_year) |> 
   # Calculate carryover soil moisture
-  mutate(sm_co_in = pmin(peff_win_in - et_win_in, 0.75 * awc_in_in * rz_in)) |> 
+  mutate(smco_in = pmin(peff_win_in - et_win_in, 0.75 * awc_in_in * rz_in)) |> 
   ungroup() |> 
-  distinct(id, water_year, sm_co_in)
+  distinct(id, water_year, smco_in, rz_in)
 
 # ==== SAVE ====================================================================
 
-save(smco, file = "Data/Clean/Input Data/smco.rda")
+save(smco_rz, file = "Data/Clean/Input Data/smco_rz.rda")
