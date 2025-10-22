@@ -12,14 +12,11 @@ load("Data/Clean/Input Data/ssurgo.rda")
 load("Data/Clean/Input Data/prism_daily.rda")
 load("Data/Clean/Input Data/openet_eemetric.rda")
 
-# Load crop rooting zone depths
-rooting_depth = read_excel("Data/Misc/rooting_depth.xlsx")
-
 # ==== EFFECTIVE PRECIP ========================================================
 
 peff_daily = left_join(
   prism_daily,
-  ssurgo |> select(id, curve_number),
+  ssurgo,
   by = "id",
   relationship = "many-to-one"
 ) |> 
@@ -36,8 +33,7 @@ peff_daily = left_join(
     ),
     # Calculate daily effective precipitation for non-irrigated condition
     peff_in = prcp_in - runoff_in
-  ) |> 
-  select(id, water_year, year, month, day, peff_in)
+  )
 
 # Aggregate daily effective precip to monthly
 peff_monthly = peff_daily |> 
@@ -55,40 +51,27 @@ peff_winter = peff_monthly |>
   summarize(peff_win_in = sum(peff_in, na.rm = FALSE), .groups = "drop")
 
 peff = peff_monthly |> 
-  left_join(peff_winter, by = c("id", "water_year")) |> 
-  select(id, water_year, year, month, peff_in, peff_win_in)
+  left_join(peff_winter, by = c("id", "water_year"))
+
+# Free up memory
+rm(prism_daily, peff_daily, peff_monthly, peff_winter)
+gc()
 
 # ==== CARRYOVER SOIL MOISTURE =================================================
 
-all_combos = expand_grid(
-  # Create crosswalk of all fields, years, and months
-  id = unique(fields_panel$id),
-  year = 2016:2024,
-  month = 1:12
-) |> 
-  # Create water year variable
-  mutate(water_year = if_else(month >= 11, year + 1, year)) |> 
-  # Only include relevant months
-  filter(water_year %in% 2017:2024)
-
-merge = all_combos |> 
+smco_rz = peff |> 
   left_join(
-    fields_panel |> select(id, year, rz_in),
+    fields_panel |> select(id, year, acres, rz_in),
     by = c("id", "water_year" = "year"),
     relationship = "many-to-one"
   ) |> 
   left_join(
-    peff |> select(-peff_in),
+    openet_eemetric,
     by = c("id", "water_year", "year", "month"),
     relationship = "one-to-one"
   ) |> 
   left_join(
-    openet_eemetric |> select(-et_in),
-    by = c("id", "water_year", "year", "month"),
-    relationship = "one-to-one"
-  ) |> 
-  left_join(
-    ssurgo |> select(id, awc_in_in, max_rz_in, curve_number),
+    ssurgo,
     by = "id",
     relationship = "many-to-one"
   ) |> 
@@ -97,18 +80,25 @@ merge = all_combos |>
     is.na(rz_in) ~ rz_in, # Keep NA as is
     !is.na(rz_in) & rz_in > max_rz_in ~ max_rz_in, # Set rz to restrictive layer if it exceeds it
     TRUE ~ rz_in # Keep all other cases as is
-  ))
-
-smco_rz = merge |> 
+  )) |> 
   group_by(id, water_year) |> 
-  # Calculate carryover soil moisture
+  # Calculate carryover soil moisture for each field-water year
   mutate(smco_in = pmin(peff_win_in - et_win_in, 0.75 * awc_in_in * rz_in)) |> 
-  ungroup() |> 
-  distinct(id, water_year, smco_in, rz_in)
+  ungroup()
 
-# ==== MERGE ===================================================================
+# ==== MASTERDATA ==============================================================
 
+masterdata = smco_rz |> 
+  select(
+    id,
+    year,
+    month,
+    acres,
+    et_in,
+    peff_in,
+    smco_in
+  )
 
 # ==== SAVE ====================================================================
 
-save(masterdata, file = "Data/Clean/Depletion/Utah/masterdata.rda")
+save(masterdata, file = "Data/Clean/Depletion/masterdata.rda")

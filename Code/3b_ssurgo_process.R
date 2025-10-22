@@ -101,12 +101,8 @@ ssurgo = ssurgo_stats |>
   summarize(
     # Calculate area-weighted mean AWS
     aws_in = weighted.mean(aws_in, w = mu_acres, na.rm = TRUE),
-    # Calculate usable soil water storage (40% of AWS)
-    usws_in = 0.4 * aws_in,
     # Calculate available water capacity
     awc_in_in = aws_in / 59,
-    # Calculate soil water storage factor
-    swsf = 0.531747 + 0.295164*usws_in - 0.057697*usws_in^2 + 0.003804*usws_in^3,
     # Calculate area-weighted mean depth to water table
     water_table_in = weighted.mean(water_table_in, w = mu_acres, na.rm = TRUE),
     # Calculate area-weighted mean depth to restrictive layer
@@ -119,12 +115,12 @@ ssurgo = ssurgo_stats |>
     # Max rooting depth possible based on water table or restrictive layer
     max_rz_in = pmin(water_table_in, restrictive_layer_in, na.rm = TRUE),
     # Convert NaN values to NA
-    across(c(awc_in_in, swsf, max_rz_in), ~na_if(., NaN))
+    across(c(awc_in_in, max_rz_in), ~na_if(., NaN))
   ) |> 
   # Join each field with its SSURGO data
   right_join(fields, by = "id") |> 
   # Select needed variables
-  select(id, awc_in_in, swsf, max_rz_in, curve_number)
+  select(id, awc_in_in, max_rz_in, curve_number)
 
 # ==== SAVE ====================================================================
 

@@ -26,7 +26,6 @@ for (year in 2017:2024) {
     "-makevalid"
   ))
 }
-
 # ==== LOAD ====================================================================
 
 # Initialize list to store each WRLU year
@@ -89,9 +88,6 @@ for (yr in 2017:2024) {
   }
 }
 
-# Load crop rooting zone depths
-rooting_depth = read_excel("Data/Misc/rooting_depth.xlsx")
-
 # ==== BUILD PANEL =============================================================
 
 # Define 2024 fields as base polygons
@@ -144,7 +140,7 @@ for (yr in names(wrlu_list)) {
     mutate(year = as.integer(year), crop = str_to_title(crop))
 }
 
-# ==== ANALYZE CROP LABELING CHANGES ===========================================
+# ==== HARMONIZE WRLU CROPS ACROSS YEARS =======================================
 
 # Count number of crops per year to analyze changes in labels across years
 crop_count = wrlu_panel |> 
@@ -153,46 +149,65 @@ crop_count = wrlu_panel |>
   count() |> 
   pivot_wider(names_from = year, values_from = n)
 
-# For each WRLU crop that doens't match a CDL crop, look at most common CDL crop
-beans = wrlu_panel |> filter(crop == "Beans") |> group_by(cdl) |> count()
-berries = wrlu_panel |> filter(crop == "Berries") |> group_by(cdl) |> count()
-dry = wrlu_panel |> filter(crop == "Dry Land/Other") |> group_by(cdl) |> count()
-fallow = wrlu_panel |> filter(crop == "Fallow") |> group_by(cdl) |> count()
-fallow_idle = wrlu_panel |> filter(crop == "Fallow/Idle") |> group_by(cdl) |> count()
-field_un = wrlu_panel |> filter(crop == "Field Crop Unspecified") |> group_by(cdl) |> count()
-grain_un = wrlu_panel |> filter(crop == "Grain/Seeds Unspecified") |> group_by(cdl) |> count()
-grass_hay = wrlu_panel |> filter(crop == "Grass Hay") |> group_by(cdl) |> count()
-horti = wrlu_panel |> filter(crop == "Horticulture") |> group_by(cdl) |> count()
-idle = wrlu_panel |> filter(crop == "Idle") |> group_by(cdl) |> count()
-idle_pasture = wrlu_panel |> filter(crop == "Idle Pasture") |> group_by(cdl) |> count()
-melon = wrlu_panel |> filter(crop == "Melon") |> group_by(cdl) |> count()
-onion = wrlu_panel |> filter(crop == "Onion") |> group_by(cdl) |> count()
-orchard_un = wrlu_panel |> filter(crop == "Orchard Unspecified") |> group_by(cdl) |> count()
-pasture = wrlu_panel |> filter(crop == "Pasture") |> group_by(cdl) |> count()
-potato = wrlu_panel |> filter(crop == "Potato") |> group_by(cdl) |> count()
-turf = wrlu_panel |> filter(crop == "Turfgrass") |> group_by(cdl) |> count()
-turf_ag = wrlu_panel |> filter(crop == "Turfgrass Ag") |> group_by(cdl) |> count()
-veg = wrlu_panel |> filter(crop == "Vegetables") |> group_by(cdl) |> count()
+cdl_count = wrlu_panel |> 
+  st_drop_geometry() |> 
+  group_by(cdl, year) |> 
+  count() |> 
+  pivot_wider(names_from = year, values_from = n)
 
-# ==== FINALIZE PANEL ==========================================================
+# Fields with Grass Hay as crop in 2024
+grass_hay_fields = wrlu_panel |> 
+  filter(year == 2024, crop == "Grass Hay")
+
+# Harmonize WRLU crops across years
+wrlu_harmonized = wrlu_panel |> 
+  mutate(crop = case_when(
+    # Overwrite 2017-2023 Alfalfa crop with Grass Hay if 2024 crop was Grass Hay
+    id %in% grass_hay_fields$id & year < 2024 & crop == "Alfalfa" ~ "Grass Hay",
+    # Put Fallow, Idle, and Idle Pasture into one category
+    crop %in% c("Fallow", "Idle", "Idle Pasture") ~ "Fallow/Idle",
+    # Put Turfgrass into Turfgrass Ag
+    crop == "Turfgrass" ~ "Turfgrass Ag",
+    # Respell Grassy Hay to Grass Hay
+    crop == "Grassy Hay" ~ "Grass Hay",
+    # Align CDL name with WRLU name
+    crop == "Grassland/Pasture" ~ "Grass/Pasture",
+    # Set Dry Land/Other as Fallow/Idle
+    crop == "Dry Land/Other" ~ "Fallow/Idle",
+    TRUE ~ crop
+  ))
+
+# Count number of crops per year after harmonizing
+crop_count_harmonized = wrlu_harmonized |> 
+  st_drop_geometry() |> 
+  group_by(crop, year) |> 
+  count() |> 
+  pivot_wider(names_from = year, values_from = n)
+
+# Load CDL crops in Utah
+cdl_crops = read_excel("Data/Misc/rooting_depth.xlsx", sheet = "cdl") |> 
+  filter(utah == 1)
+
+cdl_wrlu_proportions = wrlu_harmonized |> 
+  st_drop_geometry() |> 
+  mutate(cdl = if_else(cdl == "Grassland/Pasture", "Grass/Pasture", cdl)) |> 
+  group_by(year, crop_cdl = cdl, crop_wrlu = crop) |> 
+  tally(name = "field_count") |> 
+  filter(crop_cdl %in% cdl_crops$crop) |> 
+  group_by(year, crop_cdl) |> 
+  mutate(prop = field_count / sum(field_count)) |> 
+  ungroup() |> 
+  select(-field_count) |> 
+  pivot_wider(
+    names_from = year,
+    values_from = prop,
+    values_fill = 0
+  )
+
+# ==== FINALIZE PRE-CDL PANEL ==================================================
 
 # Finalize 2017-2024 fields panel
-fields_panel_temp = wrlu_panel |> 
-  # Align crop names across years and with CDL labels
-  mutate(crop = case_when(
-    crop %in% c("Dry Land/Other", "Fallow", "Idle", "Fallow/Idle") ~ "Fallow/Idle Cropland",
-    crop %in% c("Idle Pasture", "Pasture") ~ "Grass/Pasture",
-    crop %in% c("Turfgrass", "Turfgrass Ag") ~ "Sod/Grass Seed",
-    crop == "Beans" ~ "Dry Beans",
-    crop == "Field Crop Unspecified" ~ "Other Crops",
-    crop == "Grass Hay" ~ "Other Hay/Non Alfalfa",
-    crop == "Onion" ~ "Onions",
-    crop == "Orchard Unspecified" ~ "Other Tree Crops",
-    crop == "Potato" ~ "Potatoes",
-    TRUE ~ crop
-  )) |> 
-  # Merge with rooting depth data
-  left_join(rooting_depth, by = "crop") |> 
+fields_panel_temp = wrlu_harmonized |> 
   # Select needed variables
   select(
     id,
@@ -205,7 +220,6 @@ fields_panel_temp = wrlu_panel |>
     crop,
     crop_group,
     land_use_group,
-    rz_in,
     irr_method,
     geometry
   ) |> 
